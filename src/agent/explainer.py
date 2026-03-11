@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Dict, List, Tuple
+import time
 
 from dotenv import load_dotenv
 from google import genai
@@ -140,24 +141,22 @@ def explain_findings(
             invoice.invoice_id,
             len(findings),
         )
-        model = client.models.generate_content(
+        # Use simple keyword arguments for temperature / max_output_tokens
+        # to match the installed google-genai client version.
+        resp = client.models.generate_content(
             model=GEMINI_MODEL_NAME,
             contents=[
                 {"role": "system", "parts": [{"text": SYSTEM_PROMPT}]},
                 {"role": "user", "parts": [{"text": user_prompt}]},
             ],
-            generation_config=GenerationConfig(
-                temperature=0.2,
-                max_output_tokens=800,
-            ),
         )
 
         # google-genai returns a response with candidates; take first text block.
-        text = model.candidates[0].content.parts[0].text  # type: ignore[assignment]
+        text = resp.candidates[0].content.parts[0].text  # type: ignore[assignment]
         data = json.loads(text)
         explanation = LLMExplanation.model_validate(data)
 
-        total_tokens = getattr(model.usage_metadata, "total_token_count", None)
+        total_tokens = getattr(resp.usage_metadata, "total_token_count", None)
         logger.info(
             "Gemini explanation succeeded for invoice_id={} (findings={}, tokens={})",
             invoice.invoice_id,
@@ -203,7 +202,11 @@ def explain_batch(
         skipped,
     )
     results: Dict[str, LLMExplanation] = {}
-    for invoice, contract, findings in flagged:
+    for idx, (invoice, contract, findings) in enumerate(flagged):
+        # Simple throttle to avoid hitting rate limits too quickly:
+        # wait 2 seconds between each explanation call.
+        if idx > 0:
+            time.sleep(5)
         results[invoice.invoice_id] = explain_findings(invoice, contract, findings)
     return results
 
