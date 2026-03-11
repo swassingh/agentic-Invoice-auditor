@@ -122,3 +122,58 @@ class CleanInvoiceRow(BaseModel):
     billed_total_amount: float
 
     model_config = {"extra": "forbid"}
+
+
+class LLMExplanation(BaseModel):
+    """
+    LLM-side explanation of deterministic audit findings for a single invoice.
+    The LLM does not compute pass/fail; it only explains existing findings.
+    """
+
+    invoice_id: str
+    summary: str
+    findings_explained: list[str]
+    total_recovery_opportunity: float
+    dispute_recommended: bool
+    dispute_message: str
+    confidence: Literal["HIGH", "MEDIUM", "LOW"]
+
+    model_config = {"extra": "forbid"}
+
+
+class AuditResult(BaseModel):
+    """
+    Aggregated view per invoice: raw invoice, findings, and optional LLM explanation.
+    This is what the service layer returns to the UI.
+    """
+
+    invoice: FreightInvoice
+    findings: list[AuditFinding]
+    explanation: Optional[LLMExplanation] = None
+
+    model_config = {"extra": "forbid"}
+
+    @property
+    def total_dollar_impact(self) -> float:
+        return sum(f.dollar_impact for f in self.findings)
+
+    @property
+    def has_errors(self) -> bool:
+        return bool(self.findings)
+
+    @property
+    def max_severity(self) -> Optional[str]:
+        if not self.findings:
+            return None
+        order = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+        return max(self.findings, key=lambda f: order.get(f.severity, 0)).severity
+
+
+__all__ = [
+    "RateContract",
+    "FreightInvoice",
+    "AuditFinding",
+    "CleanInvoiceRow",
+    "LLMExplanation",
+    "AuditResult",
+]

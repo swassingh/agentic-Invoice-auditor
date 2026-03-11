@@ -1,3 +1,7 @@
-# Agentic Freight Billing Auditor — Day 1 (RAW + INGESTION)
+# Agentic Freight Billing Auditor
 pydantic>=2.0
 pandas>=2.0
+streamlit>=1.32
+python-dotenv>=1.0
+loguru>=0.7
+google-genai>=0.3

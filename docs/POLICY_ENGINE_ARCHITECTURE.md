@@ -37,14 +37,14 @@ data/invoices_sample.csv   (or processed layer)
 ## SPEC alignment (Engineering SPEC §4)
 
 | User-facing check            | `rule_id`                    | Severity |
-|-----------------------------|------------------------------|----------|
-| Base rate mismatch          | `BASE_RATE_OVERAGE`          | HIGH     |
-| Fuel surcharge violation    | `FUEL_SURCHARGE_OVERAGE`    | HIGH     |
-| Accessorial fee violation   | `UNAUTHORIZED_ACCESSORIAL`   | MEDIUM   |
-| Incorrect total amount      | `TOTAL_MISMATCH`             | LOW      |
-| Missing contract lane       | `MISSING_CONTRACT`           | HIGH     |
-| Duplicate invoice           | `DUPLICATE_INVOICE`          | HIGH     |
-| Weight inflation (SPEC)     | `WEIGHT_INFLATION`           | MEDIUM   |
+|------------------------------|------------------------------|----------|
+| Base rate mismatch           | `BASE_RATE_OVERAGE`          | HIGH     |
+| Fuel surcharge violation     | `FUEL_SURCHARGE_OVERAGE`     | HIGH     |
+| Accessorial fee violation    | `UNAUTHORIZED_ACCESSORIAL`   | MEDIUM   |
+| Incorrect total amount       | `TOTAL_MISMATCH`             | LOW      |
+| Missing contract lane        | `MISSING_CONTRACT`           | HIGH     |
+| Duplicate invoice            | `DUPLICATE_INVOICE`          | HIGH     |
+| Weight inflation (SPEC)      | `WEIGHT_INFLATION`           | MEDIUM   |
 
 ## Finding schema (§4.1)
 
@@ -77,3 +77,11 @@ using `_error_label` at audit time.
 ## Testing strategy
 
 `__main__` compares injected `_error_label` counts vs findings by mapping label → rule_id(s), prints Injected | Caught | Miss table — proof before UI/agent layers.
+
+For Day 2, an additional **pipeline smoke test** (`src/scripts/smoke_test_day2.py`) runs:
+
+- `pandas.DataFrame` (uploaded-style invoices) → `FreightInvoice` models,
+- `audit_invoices(...)` with the same rules as above,
+- aggregation into `AuditResult` objects,
+
+without calling any LLMs. The Streamlit dashboard then consumes these `AuditResult` objects and, optionally, attaches `LLMExplanation` records from the agent layer — but the deterministic behavior described in this document remains the single source of truth for pass/fail and dollar impacts.

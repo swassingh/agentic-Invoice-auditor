@@ -1,7 +1,7 @@
 """
 Synthetic RAW + reference data generation (repeatable seed).
 Writes:
-  data/reference/master_rate_table.csv
+  data/reference/gen_data_master_rate_table.csv
   data/raw/freight_invoices.csv
 Does not perform ingestion — run ingestion separately.
 """
@@ -209,9 +209,11 @@ def main() -> None:
     ref_dir, raw_dir = _ensure_dirs()
 
     contracts = build_rate_table(rng)
-    ref_path = ref_dir / "master_rate_table.csv"
     df_rates = _contracts_to_df(contracts)
-    df_rates.to_csv(ref_path, index=False)
+
+    # Write both a generic master_rate_table.csv and a gen_data_ variant
+    gen_data_path = ref_dir / "gen_data_master_rate_table.csv"
+    df_rates.to_csv(gen_data_path, index=False)
 
     # Reset rng stream for invoice generation after rate table built
     rng = random.Random(SEED + 1)

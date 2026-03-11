@@ -1,6 +1,6 @@
 """
 CLI: RAW → INGESTION → processed CSV.
-Run after generate_data.py.
+Run after generate_data.py / generate_invoices.py.
 """
 
 from __future__ import annotations
@@ -21,8 +21,32 @@ def main() -> None:
             sys.stdout.reconfigure(encoding="utf-8")
         except Exception:
             pass
-    rows = run_ingestion()
-    print(f"✅ Ingestion complete: {len(rows)} rows → data/processed/invoices_clean.csv")
+
+    root = _ROOT
+
+    # 1) Ingest freight_invoices.csv → invoices_clean.csv
+    raw_freight = root / "data" / "raw" / "freight_invoices.csv"
+    processed_freight = root / "data" / "processed" / "freight_invoices_clean.csv"
+    if raw_freight.exists():
+        rows_freight = run_ingestion(raw_csv=raw_freight, processed_csv=processed_freight)
+        print(
+            f"✅ Ingestion complete: {len(rows_freight)} rows → "
+            f"{processed_freight.as_posix()}"
+        )
+    else:
+        print(f"ℹ️ Skipping ingestion for {raw_freight.as_posix()} (file not found)")
+
+    # 2) Ingest invoices_sample.csv (if present) → invoices_sample_clean.csv
+    raw_sample = root / "data" / "raw" / "invoices_sample.csv"
+    processed_sample = root / "data" / "processed" / "invoices_sample_clean.csv"
+    if raw_sample.exists():
+        rows_sample = run_ingestion(raw_csv=raw_sample, processed_csv=processed_sample)
+        print(
+            f"✅ Ingestion complete: {len(rows_sample)} rows → "
+            f"{processed_sample.as_posix()}"
+        )
+    else:
+        print(f"ℹ️ Skipping ingestion for {raw_sample.as_posix()} (file not found)")
 
 
 if __name__ == "__main__":

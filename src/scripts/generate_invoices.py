@@ -67,21 +67,35 @@ def _repo_root() -> Path:
 
 def load_rate_table() -> pd.DataFrame:
     """
-    Load data/master_rate_table.csv first; fall back to data/reference/
-    and sync to master so the canonical path exists.
+    Load the rate table used for invoice generation.
+
+    Priority:
+      1) data/reference/gen_invoice_master_rate_table.csv
+      2) data/reference/gen_data_master_rate_table.csv
+      3) data/master_rate_table.csv
+      4) data/reference/master_rate_table.csv
     """
     root = _repo_root()
     master = root / "data" / "master_rate_table.csv"
-    reference = root / "data" / "reference" / "master_rate_table.csv"
-    if master.exists():
+    reference_master = root / "data" / "reference" / "master_rate_table.csv"
+    gen_invoice = root / "data" / "reference" / "gen_invoice_master_rate_table.csv"
+    gen_data = root / "data" / "reference" / "gen_data_master_rate_table.csv"
+
+    if gen_invoice.exists():
+        path = gen_invoice
+    elif gen_data.exists():
+        path = gen_data
+    elif master.exists():
         path = master
-    elif reference.exists():
-        path = reference
-        master.parent.mkdir(parents=True, exist_ok=True)
-        pd.read_csv(path).to_csv(master, index=False)
+    elif reference_master.exists():
+        path = reference_master
     else:
         raise FileNotFoundError(
-            "No rate table at data/master_rate_table.csv or data/reference/master_rate_table.csv"
+            "No rate table found. Expected one of:\n"
+            "  - data/master_rate_table.csv\n"
+            "  - data/reference/master_rate_table.csv\n"
+            "  - data/reference/gen_invoice_master_rate_table.csv\n"
+            "  - data/reference/gen_data_master_rate_table.csv"
         )
     return pd.read_csv(path)
 
@@ -248,6 +262,13 @@ def main() -> None:
     rng = random.Random(SEED)
     contracts_df = load_rate_table()
 
+    # Persist the rate table snapshot used for this invoice run
+    root = _repo_root()
+    ref_dir = root / "data" / "reference"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    gen_invoice_path = ref_dir / "gen_invoice_master_rate_table.csv"
+    contracts_df.to_csv(gen_invoice_path, index=False)
+
     # Exact label list (50 entries)
     labels: list[str] = []
     for label, n in COUNTS.items():
@@ -300,9 +321,11 @@ def main() -> None:
 
     out_df = pd.DataFrame(ordered)
     out_df = out_df[COLUMNS]
-    out_path = _repo_root() / "data" / "invoices_sample.csv"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_df.to_csv(out_path, index=False)
+
+    root = _repo_root()
+    out_raw = root / "data" / "raw" / "invoices_sample.csv"
+    out_raw.parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_csv(out_raw, index=False)
 
     print("Error breakdown (_error_label):")
     for lab, cnt in out_df["_error_label"].value_counts().sort_index().items():
@@ -325,7 +348,7 @@ def main() -> None:
         if abs(float(r["total_charged"]) - calculated_total(r)) > 0.01
     )
     print(f"⚠️ Validation: {mismatches} invoices where total_charged doesn't match calculated")
-    print(f"Saved: {out_path}")
+    print(f"Saved: {out_raw}")
 
 
 if __name__ == "__main__":

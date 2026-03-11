@@ -66,22 +66,53 @@ def _repo_root() -> Path:
     return _ROOT
 
 
-def load_rate_table() -> pd.DataFrame:
+def load_rate_tables() -> dict[Path, pd.DataFrame]:
+    """
+    Load all rate tables whose filenames contain 'master_rate_table' under:
+      - data/reference/*master_rate_table*.csv
+
+    Returns a mapping of path -> DataFrame.
+    """
     root = _repo_root()
+    tables: dict[Path, pd.DataFrame] = {}
+
     master = root / "data" / "master_rate_table.csv"
-    reference = root / "data" / "reference" / "master_rate_table.csv"
     if master.exists():
-        return pd.read_csv(master)
-    if reference.exists():
-        return pd.read_csv(reference)
-    raise FileNotFoundError("master_rate_table.csv not found")
+        tables[master] = pd.read_csv(master)
+
+    ref_dir = root / "data" / "reference"
+    if ref_dir.exists():
+        for p in ref_dir.glob("*master_rate_table*.csv"):
+            # Avoid re-reading the same canonical path if it overlaps
+            if p not in tables:
+                tables[p] = pd.read_csv(p)
+
+    if not tables:
+        raise FileNotFoundError(
+            "No rate tables found. Expected data/master_rate_table.csv or files in "
+            "data/reference/*master_rate_table*.csv"
+        )
+    return tables
 
 
 def load_invoices() -> pd.DataFrame:
-    path = _repo_root() / "data" / "invoices_sample.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"invoices_sample.csv not found at {path}")
-    return pd.read_csv(path)
+    """
+    Load the labeled invoices_sample dataset.
+
+    Priority:
+      1) data/invoices_sample.csv
+      2) data/raw/invoices_sample.csv
+    """
+    root = _repo_root()
+    path_root = root / "data" / "invoices_sample.csv"
+    path_raw = root / "data" / "raw" / "invoices_sample.csv"
+    if path_root.exists():
+        return pd.read_csv(path_root)
+    if path_raw.exists():
+        return pd.read_csv(path_raw)
+    raise FileNotFoundError(
+        f"invoices_sample.csv not found at {path_root} or {path_raw}"
+    )
 
 
 def calc_total_row(r: pd.Series) -> float:
@@ -119,57 +150,82 @@ def main() -> int:
 
     all_ok = True
     try:
-        rates = load_rate_table()
+        rate_tables = load_rate_tables()
         inv = load_invoices()
     except FileNotFoundError as e:
         print(f"❌ FAIL: {e}")
         print("FIX ISSUES BEFORE PROCEEDING")
         return 1
 
-    # --- Rate table checks ---
-    rate_nulls = rates.isnull().any()
-    if rate_nulls.any():
-        bad = rate_nulls[rate_nulls].index.tolist()
-        all_ok &= report(False, f"rate table nulls in columns: {bad}")
-    else:
-        all_ok &= report(True, "rate table — no null values in any column")
+    # --- Rate table checks (for every *master_rate_table* under data/reference or canonical) ---
+    for path, rates in rate_tables.items():
+        print(f"\n=== Validating rate table: {path} ===")
 
-    if REQUIRE_UNIFORM_FUEL_PCT is not None:
-        fuel_col = rates["fuel_surcharge_pct"]
-        bad_fuel = fuel_col[abs(fuel_col.astype(float) - REQUIRE_UNIFORM_FUEL_PCT) > 1e-9]
-        if len(bad_fuel) > 0:
+        rate_nulls = rates.isnull().any()
+        if rate_nulls.any():
+            bad = rate_nulls[rate_nulls].index.tolist()
+            all_ok &= report(False, f"rate table nulls in columns: {bad}")
+        else:
+            all_ok &= report(True, "rate table — no null values in any column")
+
+        if REQUIRE_UNIFORM_FUEL_PCT is not None:
+            fuel_col = rates["fuel_surcharge_pct"]
+            bad_fuel = fuel_col[
+                abs(fuel_col.astype(float) - REQUIRE_UNIFORM_FUEL_PCT) > 1e-9
+            ]
+            if len(bad_fuel) > 0:
+                all_ok &= report(
+                    False,
+                    f"rate table fuel_surcharge_pct not all {REQUIRE_UNIFORM_FUEL_PCT} "
+                    f"({len(bad_fuel)} row(s) differ)",
+                )
+            else:
+                all_ok &= report(
+                    True,
+                    f"rate table — all fuel_surcharge_pct == {REQUIRE_UNIFORM_FUEL_PCT}",
+                )
+        else:
+            all_ok &= report(
+                True,
+                "rate table — fuel_surcharge_pct uniform check skipped "
+                "(REQUIRE_UNIFORM_FUEL_PCT is None)",
+            )
+
+        if len(rates) != RATE_ROW_COUNT:
             all_ok &= report(
                 False,
-                f"rate table fuel_surcharge_pct not all {REQUIRE_UNIFORM_FUEL_PCT} "
-                f"({len(bad_fuel)} row(s) differ)",
+                f"rate table row count {len(rates)} != expected {RATE_ROW_COUNT} "
+                "(3×10 contracts)",
+            )
+        else:
+            all_ok &= report(True, f"rate table — {RATE_ROW_COUNT} contracts present")
+
+        # effective_date < expiration_date
+        eff = pd.to_datetime(rates["effective_date"])
+        exp = pd.to_datetime(rates["expiration_date"])
+        date_ok = (eff < exp).all()
+        if not date_ok:
+            all_ok &= report(
+                False,
+                "rate table — effective_date >= expiration_date for some row(s)",
             )
         else:
             all_ok &= report(
                 True,
-                f"rate table — all fuel_surcharge_pct == {REQUIRE_UNIFORM_FUEL_PCT}",
+                "rate table — effective_date < expiration_date for all rows",
             )
-    else:
-        all_ok &= report(
-            True,
-            "rate table — fuel_surcharge_pct uniform check skipped (REQUIRE_UNIFORM_FUEL_PCT is None)",
-        )
 
-    if len(rates) != RATE_ROW_COUNT:
-        all_ok &= report(
-            False,
-            f"rate table row count {len(rates)} != expected {RATE_ROW_COUNT} (3×10 contracts)",
-        )
-    else:
-        all_ok &= report(True, f"rate table — {RATE_ROW_COUNT} contracts present")
-
-    # effective_date < expiration_date
-    eff = pd.to_datetime(rates["effective_date"])
-    exp = pd.to_datetime(rates["expiration_date"])
-    date_ok = (eff < exp).all()
-    if not date_ok:
-        all_ok &= report(False, "rate table — effective_date >= expiration_date for some row(s)")
-    else:
-        all_ok &= report(True, "rate table — effective_date < expiration_date for all rows")
+    # Choose a canonical rate table for invoice + cross-file checks:
+    # Prefer any table under data/reference/, fall back to the first one.
+    canonical = None
+    for path, df in rate_tables.items():
+        # Heuristic: any CSV with 'master_rate_table' under data/reference
+        if "data" in path.parts and "reference" in path.parts:
+            canonical = df
+            break
+    if canonical is None:
+        canonical = next(iter(rate_tables.values()))
+    rates = canonical
 
     # --- Invoice checks ---
     inv_nulls = inv[REQUIRED_INVOICE_COLS].isnull().any()
