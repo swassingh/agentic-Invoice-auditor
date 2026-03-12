@@ -1,4 +1,4 @@
-# Policy Engine Architecture (v1)
+# Policy Engine Architecture
 
 ## Purpose
 

@@ -1,4 +1,4 @@
-# Agentic Freight Billing Auditor (v1)
+# Agentic Freight Billing Auditor
 
 Industrial **DataOps** prototype: synthetic contract rates + raw invoices → validated **silver** CSV → **deterministic policy engine** → **LLM explanations in a Streamlit dashboard**.  
 This is **version 1** of the auditor: a focused prototype that proves the architecture and core rules. Further growth is planned, with the explicit goal of converging on a **government-grade, standardized set of `violation_type` codes** that align with regulatory and audit expectations.
