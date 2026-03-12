@@ -1,7 +1,7 @@
-# Agentic Freight Billing Auditor
+# Agentic Freight Billing Auditor (v1)
 
 Industrial **DataOps** prototype: synthetic contract rates + raw invoices → validated **silver** CSV → **deterministic policy engine** → **LLM explanations in a Streamlit dashboard**.  
-Day 1 built the **RAW → structured → audited** path; Day 2 adds a thin **UI + agent layer** that explains, but never changes, deterministic findings.
+This is **version 1** of the auditor: a focused prototype that proves the architecture and core rules. Further growth is planned, with the explicit goal of converging on a **government-grade, standardized set of `violation_type` codes** that align with regulatory and audit expectations.
 
 ---
 
@@ -258,6 +258,7 @@ In the browser:
 ## Next steps
 
 - **pytest** — formal tests around `policy_engine`, `audit_service`, and `explainer` (beyond the Day 2 smoke test).
+- **Standardized violation taxonomy (v2+)** — evolve the current `rule_id` / `violation_type` set into a **government-standard catalog** (e.g. codes for base rate, fuel surcharge, accessorials, duplicates) so outputs are directly usable in regulated environments and consistent across carriers, contracts, and agencies.
 
 ---
 

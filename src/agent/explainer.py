@@ -29,7 +29,7 @@ from src.engine.models import (
 
 load_dotenv()
 
-GEMINI_MODEL_NAME = "gemini-3-flash-preview"
+GEMINI_MODEL_NAME = "gemini-2.5-flash" # "gemini-2.5-pro" # "gemini-3-flash-preview"
 
 SYSTEM_PROMPT = """
 You are a senior freight billing auditor with 20 years of experience 
@@ -146,7 +146,7 @@ def explain_findings(
         resp = client.models.generate_content(
             model=GEMINI_MODEL_NAME,
             contents=[
-                {"role": "system", "parts": [{"text": SYSTEM_PROMPT}]},
+                {"role": "model", "parts": [{"text": SYSTEM_PROMPT}]},
                 {"role": "user", "parts": [{"text": user_prompt}]},
             ],
         )
@@ -193,6 +193,10 @@ def explain_batch(
 ) -> Dict[str, LLMExplanation]:
     """
     Explain only invoices that have findings. Clean invoices are skipped.
+
+    This implementation batches all flagged invoices into a single LLM call
+    to reduce rate-limit pressure. The model is asked to return a JSON object
+    keyed by invoice_id.
     """
     flagged = [t for t in invoices_with_findings if t[2]]
     skipped = len(invoices_with_findings) - len(flagged)
@@ -201,12 +205,127 @@ def explain_batch(
         len(flagged),
         skipped,
     )
+
     results: Dict[str, LLMExplanation] = {}
-    for idx, (invoice, contract, findings) in enumerate(flagged):
-        # Simple throttle to avoid hitting rate limits too quickly:
-        # wait 2 seconds between each explanation call.
-        if idx > 0:
-            time.sleep(5)
-        results[invoice.invoice_id] = explain_findings(invoice, contract, findings)
-    return results
+    if not flagged:
+        return results
+
+    # Build a single structured payload for all invoices.
+    invoices_payload = []
+    for invoice, contract, findings in flagged:
+        invoices_payload.append(
+            {
+                "invoice_id": invoice.invoice_id,
+                "details": {
+                    "carrier_name": invoice.carrier_name,
+                    "lane_id": invoice.lane_id,
+                    "origin_zip": invoice.origin_zip,
+                    "destination_zip": invoice.destination_zip,
+                    "invoice_date": str(invoice.invoice_date),
+                    "total_charged": invoice.total_charged,
+                },
+                "contract": {
+                    "lane_id": contract.lane_id,
+                    "carrier_name": contract.carrier_name,
+                    "agreed_base_rate_per_lb": contract.agreed_base_rate_per_lb,
+                    "fuel_surcharge_pct": contract.fuel_surcharge_pct,
+                    "allowed_accessorials": contract.allowed_accessorials,
+                },
+                "findings": [
+                    {
+                        "rule_id": f.rule_id,
+                        "field_audited": f.field_audited,
+                        "charged_value": f.charged_value,
+                        "contract_value": f.contract_value,
+                        "dollar_impact": f.dollar_impact,
+                        "description": f.description,
+                        "severity": f.severity,
+                    }
+                    for f in findings
+                ],
+            }
+        )
+
+    requested_output_format = {
+        "invoice_id": "string",
+        "summary": "1-2 sentence plain English executive summary",
+        "findings_explained": [
+            "one explanation per finding, specific and dollar-quantified"
+        ],
+        "total_recovery_opportunity": 0.0,
+        "dispute_recommended": False,
+        "dispute_message": "full ready-to-send message to carrier",
+        "confidence": "HIGH | MEDIUM | LOW",
+    }
+
+    batch_payload = {
+        "invoices": invoices_payload,
+        "requested_output_format": requested_output_format,
+    }
+
+    try:
+        client = _get_client()
+        logger.info(
+            "Calling Gemini batch explainer for %s invoices", len(flagged)
+        )
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents=[
+                {"role": "model", "parts": [{"text": SYSTEM_PROMPT}]},
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                "You will receive multiple invoices at once. "
+                                "Do not wrap the output in any other object or array. "
+                                "Do not include markdown, prose, comments, or extra fields"
+                                "For each invoice, return an entry in a JSON object "
+                                "keyed by invoice_id, where each value matches the "
+                                "LLMExplanation schema described below.\n\n"
+                                f"{json.dumps(batch_payload, indent=2)}"
+                            )
+                        }
+                    ],
+                },
+            ],
+        )
+
+        text = resp.candidates[0].content.parts[0].text  # type: ignore[assignment]
+        raw = json.loads(text)
+        if not isinstance(raw, dict):
+            raise ValueError("Batch explanation response is not a JSON object")
+
+        total_tokens = getattr(resp.usage_metadata, "total_token_count", None)
+        logger.info(
+            "Gemini batch explanation succeeded (invoices={}, tokens={})",
+            len(flagged),
+            total_tokens,
+        )
+
+        # Map each invoice_id back to a validated LLMExplanation, falling back
+        # per-invoice if its entry is missing or invalid.
+        for invoice, _contract, findings in flagged:
+            inv_id = invoice.invoice_id
+            payload = raw.get(inv_id)
+            if payload is None:
+                results[inv_id] = _fallback_explanation(invoice, findings)
+                continue
+            try:
+                results[inv_id] = LLMExplanation.model_validate(payload)
+            except Exception:
+                results[inv_id] = _fallback_explanation(invoice, findings)
+
+        return results
+
+    except Exception as e:  # noqa: BLE001
+        logger.error(
+            "Gemini batch explanation failed for {} invoices with error: {}",
+            len(flagged),
+            e,
+        )
+        # Fallback: deterministic explanations for all invoices in the batch.
+        for invoice, _contract, findings in flagged:
+            results[invoice.invoice_id] = _fallback_explanation(invoice, findings)
+        return results
 
