@@ -1,9 +1,11 @@
-# Policy Engine Architecture
+# Policy Engine Architecture (v1)
 
 ## Purpose
 
 Deterministic **invoice vs contract** comparison. No LLM, no randomness, no I/O inside rule functions.  
 Input: structured invoices + rate table. Output: structured `AuditFinding` list per invoice.
+
+This document describes the **v1 engine**: a practical, production-minded rule set for a freight billing auditor. In future versions, the `rule_id` / `violation_type` space is intended to converge toward a **standardized government-grade taxonomy of violations** (e.g. normalized codes for base rate overage, fuel overage, unauthorized accessorials, duplicates) so that outputs can plug cleanly into regulatory workflows and external audit systems.
 
 ## Data flow
 
