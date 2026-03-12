@@ -293,6 +293,7 @@ def explain_batch(
 
         text = resp.candidates[0].content.parts[0].text  # type: ignore[assignment]
         raw = json.loads(text)
+        logger.debug("RAW SINGLE RESPONSE for {}: {}", invoice.invoice_id, resp)
         if not isinstance(raw, dict):
             raise ValueError("Batch explanation response is not a JSON object")
 
