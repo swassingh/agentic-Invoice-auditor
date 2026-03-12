@@ -313,7 +313,10 @@ def explain_batch(
                 results[inv_id] = _fallback_explanation(invoice, findings)
                 continue
             try:
-                results[inv_id] = LLMExplanation.model_validate(payload)
+                if not isinstance(payload, dict):
+                    raise TypeError("Per-invoice payload is not an object")
+                payload_with_id = {"invoice_id": inv_id, **payload}
+                results[inv_id] = LLMExplanation.model_validate(payload_with_id)
             except Exception:
                 results[inv_id] = _fallback_explanation(invoice, findings)
 
