@@ -6,7 +6,8 @@ Aligned with Engineering SPEC (master rate table + invoice dataset).
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal, Optional
+from enum import Enum
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -69,6 +70,43 @@ class FreightInvoice(BaseModel):
             + self.accessorial_residential
             + self.accessorial_inside_delivery
         )
+
+
+class ExtractionConfidence(str, Enum):
+    HIGH = "HIGH"  # All required fields found, values look valid
+    MEDIUM = "MEDIUM"  # Most fields found, minor ambiguity
+    LOW = "LOW"  # Multiple fields missing or ambiguous
+
+
+class ExtractedField(BaseModel):
+    value: Any
+    confidence: float  # 0.0–1.0 per field
+    raw_text: str  # exact text LLM found in document
+
+
+class PDFExtractionResult(BaseModel):
+    pdf_path: str
+    invoice_id: Optional[str] = None
+    carrier_name: Optional[str] = None
+    invoice_date: Optional[date] = None
+    lane_id: Optional[str] = None
+    origin_zip: Optional[str] = None
+    destination_zip: Optional[str] = None
+    shipment_weight_lbs: Optional[float] = None
+    freight_class: Optional[str] = None
+    base_rate_charged: Optional[float] = None
+    fuel_surcharge_pct_charged: Optional[float] = None
+    accessorial_liftgate: float = 0.0
+    accessorial_residential: float = 0.0
+    accessorial_inside_delivery: float = 0.0
+    total_charged: Optional[float] = None
+
+    # Metadata
+    overall_confidence: ExtractionConfidence = ExtractionConfidence.LOW
+    missing_fields: list[str] = Field(default_factory=list)
+    low_confidence_fields: list[str] = Field(default_factory=list)
+    extraction_notes: str = ""
+    requires_human_review: bool = True
 
 
 class AuditFinding(BaseModel):
@@ -176,4 +214,7 @@ __all__ = [
     "CleanInvoiceRow",
     "LLMExplanation",
     "AuditResult",
+    "ExtractionConfidence",
+    "ExtractedField",
+    "PDFExtractionResult",
 ]

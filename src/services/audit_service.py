@@ -177,6 +177,48 @@ def run_full_audit(
     return results, summary
 
 
+def run_full_audit_from_invoices(
+    invoices: List[FreightInvoice],
+    rate_index: Dict[Tuple[str, str], RateContract],
+    explain: bool = True,
+) -> tuple[List[AuditResult], Dict]:
+    """
+    End-to-end audit starting from in-memory FreightInvoice models.
+
+    This is used by the PDF ingestion pipeline, where invoices are
+    produced by the normalization layer instead of CSV parsing.
+    """
+    if not invoices:
+        raise ValueError("No invoices provided for audit.")
+
+    findings_by_invoice: Dict[str, List[AuditFinding]] = audit_invoices(
+        invoices, rate_index
+    )
+
+    explanations: Dict[str, "LLMExplanation"] = {}
+    if explain:
+        tuples: List[tuple[FreightInvoice, RateContract, List[AuditFinding]]] = []
+        for inv in invoices:
+            findings = findings_by_invoice.get(inv.invoice_id, [])
+            contract = rate_index.get((inv.lane_id, inv.carrier_name))
+            if contract is None:
+                continue
+            tuples.append((inv, contract, findings))
+        explanations = explain_batch(tuples)
+
+    results: List[AuditResult] = []
+    for inv in invoices:
+        inv_findings = findings_by_invoice.get(inv.invoice_id, [])
+        explanation = explanations.get(inv.invoice_id)
+        results.append(
+            AuditResult(invoice=inv, findings=inv_findings, explanation=explanation)
+        )
+
+    results.sort(key=lambda r: r.total_dollar_impact, reverse=True)
+    summary = get_summary_stats(results)
+    return results, summary
+
+
 def get_summary_stats(results: List[AuditResult]) -> Dict:
     total_invoices = len(results)
     invoices_with_errors = sum(1 for r in results if r.has_errors)
