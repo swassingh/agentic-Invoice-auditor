@@ -7,7 +7,7 @@ Input: structured invoices + rate table. Output: structured `AuditFinding` list 
 
 This document describes the **v1 engine**: a practical, production-minded rule set for a freight billing auditor. In future versions, the `rule_id` / `violation_type` space is intended to converge toward a **standardized government-grade taxonomy of violations** (e.g. normalized codes for base rate overage, fuel overage, unauthorized accessorials, duplicates) so that outputs can plug cleanly into regulatory workflows and external audit systems.
 
-## Data flow
+## Data flow (CSV path)
 
 ```
 data/master_rate_table.csv
@@ -35,6 +35,54 @@ data/invoices_sample.csv   (or processed layer)
         ▼
   dict[invoice_id, list[AuditFinding]]
 ```
+
+## PDF ingestion path (extraction → normalization → engine)
+
+The policy engine is **unchanged**; it still receives only `FreightInvoice` and the rate table. PDFs are turned into that shape by a separate ingestion layer:
+
+```
+PDF file(s)
+     │
+     ▼
+  extract_invoices_from_pdf(pdf_path)  [src/agent/pdf_extractor.py]
+     │  Uses one of:
+     │  • GeminiVisionProvider   (vision LLM; PDF→image→Gemini→JSON)
+     │  • GoogleDocumentAIProvider (Doc AI processor; PDF→entities)
+     │  • MockManifestProvider   (manifest.csv ground truth)
+     │  • Deterministic text parsers (pdfplumber) for:
+     │    - invoices_sample*.pdf (batch line regex)
+     │    - example_invoice_*.pdf (labeled single-invoice layout)
+     │
+     ▼
+  list[PDFExtractionResult]   (one or more per file)
+     │
+     ▼
+  normalize_batch(extractions, rate_table)  [src/engine/pdf_normalizer.py]
+     │  Carrier fuzzy match, lane from zips, fuel %, accessorials, total check
+     ▼
+  list[NormalizationResult]  →  ready_for_engine → list[FreightInvoice]
+     │
+     ▼
+  run_full_audit_from_invoices(invoices, rate_index, explain)  [src/services/audit_service.py]
+     │  Same as CSV path from here: audit_invoices → explain_batch → AuditResult list
+     ▼
+  list[AuditResult]  →  Streamlit (render_audit_results)
+```
+
+- **Extraction** and **normalization** are outside the engine; the engine never sees `PDFExtractionResult`, confidence, or raw PDFs.
+- **PDF_EXTRACTOR_MODE** (env): `docai` (default), `gemini`, or `mock`. On non-mock failure, the extractor falls back to the mock provider when manifest is available.
+- **Multi-invoice per PDF**: `extract_invoices_from_pdf` returns a list so one document (e.g. batch or table PDF) can yield multiple `PDFExtractionResult` items; each is normalized and audited independently.
+
+### PDF path components
+
+| Component | Role |
+|-----------|------|
+| **pdf_providers.py** | Gemini, Doc AI, and mock providers; each returns `PDFExtractionResult` (or list) from a PDF path. |
+| **pdf_extractor.py** | Single/batch extraction; `extract_invoices_from_pdf` picks provider by `PDF_EXTRACTOR_MODE`, applies special handling for `invoices_sample*.pdf` and `example_invoice_*.pdf`. |
+| **pdf_normalizer.py** | Maps `PDFExtractionResult` → lane/carrier/rates and builds `FreightInvoice`; optional validation and confidence. |
+| **audit_service.run_full_audit_from_invoices** | Takes `list[FreightInvoice]`, runs `audit_invoices`, optional `explain_batch`, returns `list[AuditResult]`. |
+
+The policy engine (`policy_engine.py`) and rule set are unchanged; they only consume `FreightInvoice` and the rate table.
 
 ## SPEC alignment (Engineering SPEC §4)
 
